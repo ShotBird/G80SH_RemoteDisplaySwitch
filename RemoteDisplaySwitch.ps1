@@ -1,4 +1,5 @@
-﻿# RemoteDisplaySwitch.ps1  (rev.8, 2026-09-28)  rev.8: 화면 꺼짐 동안 LHM 정지, 켜지면 재시작 (아래 Stop-Lhm 주석)
+﻿# RemoteDisplaySwitch.ps1  (rev.9, 2026-10-05)  rev.8: 화면 꺼짐 동안 LHM 정지, 켜지면 재시작 (아래 Stop-Lhm 주석)
+#                                               rev.9: CaseDisplay 재시작 전 낡은 off 줄로 화면 꺼짐 오판하던 것 수정 (Is-DisplayOff)
 # 규칙
 #  1. 원격이 아닐 때: 동글(BBC0104) 절대 사용 안 함. G80SH + G50F 평소 구성 유지 (어긋나면 즉시 복원)
 #     단, 화면 절전으로 G80SH를 켤 수 없는 동안은 복구하지 않는다 (재인식 루프·장치음 방지, rev.6)
@@ -99,7 +100,11 @@ $cdLog = Join-Path $env:ProgramData 'CaseDisplay.log'
 function Is-DisplayOff {
     if ([RdsInput]::IdleSeconds() -ge ($videoIdle + 5)) { return $true }
     if (Get-Process CaseDisplay -ErrorAction SilentlyContinue) {
-        $line = Get-Content $cdLog -Tail 80 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'display power: (on|off)' } | Select-Object -Last 1
+        # rev.9 (2026-10-05): CaseDisplay 가 재시작되면 그 뒤 화면이 켜져 있는 한 "display power" 줄을 새로 쓰지 않는다
+        #   (켜짐은 초기값이라 변화 없음 → 기록 없음). 그래서 재시작 전의 낡은 off 줄을 믿고 10-04 11:34 부터
+        #   화면 켜짐을 꺼짐으로 오판, LHM 을 계속 껐다. → 마지막 "started pid=" 줄보다 뒤의 display power 줄만 믿는다.
+        #   mobo/cooler 줄이 많아 80줄로는 부족할 수 있어 400줄을 본다.
+        $line = Get-Content $cdLog -Tail 400 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'display power: (on|off)|started pid=' } | Select-Object -Last 1
         if ($line) { return ($line -match 'display power: off\s*$') }
     }
     return $false
@@ -133,7 +138,7 @@ function Get-Stamp { ($srcFiles | ForEach-Object { (Get-Item $_).LastWriteTimeUt
 $stamp = Get-Stamp
 $movedLogged = $false
 
-Log ("watcher started (rev.8) reset={0} videoidle={1}s" -f (Get-ResetMode), $videoIdle)
+Log ("watcher started (rev.9) reset={0} videoidle={1}s" -f (Get-ResetMode), $videoIdle)
 $wasRemote = (Get-Remote).Active
 $lastTry = [datetime]::MinValue
 $pendingReset = $false
