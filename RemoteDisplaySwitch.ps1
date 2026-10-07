@@ -1,5 +1,6 @@
-﻿# RemoteDisplaySwitch.ps1  (rev.9, 2026-10-05)  rev.8: 화면 꺼짐 동안 LHM 정지, 켜지면 재시작 (아래 Stop-Lhm 주석)
+﻿# RemoteDisplaySwitch.ps1  (rev.10, 2026-10-08)  rev.8: 화면 꺼짐 동안 LHM 정지, 켜지면 재시작 (아래 Stop-Lhm 주석)
 #                                               rev.9: CaseDisplay 재시작 전 낡은 off 줄로 화면 꺼짐 오판하던 것 수정 (Is-DisplayOff)
+#                                               rev.10: CaseDisplay 재시작 직전(같은 초)의 off 줄도 유효로 봄 (rev.9 가 화면 꺼진 중 재시작을 켜짐으로 오판)
 # 규칙
 #  1. 원격이 아닐 때: 동글(BBC0104) 절대 사용 안 함. G80SH + G50F 평소 구성 유지 (어긋나면 즉시 복원)
 #     단, 화면 절전으로 G80SH를 켤 수 없는 동안은 복구하지 않는다 (재인식 루프·장치음 방지, rev.6)
@@ -104,8 +105,23 @@ function Is-DisplayOff {
         #   (켜짐은 초기값이라 변화 없음 → 기록 없음). 그래서 재시작 전의 낡은 off 줄을 믿고 10-04 11:34 부터
         #   화면 켜짐을 꺼짐으로 오판, LHM 을 계속 껐다. → 마지막 "started pid=" 줄보다 뒤의 display power 줄만 믿는다.
         #   mobo/cooler 줄이 많아 80줄로는 부족할 수 있어 400줄을 본다.
-        $line = Get-Content $cdLog -Tail 400 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'display power: (on|off)|started pid=' } | Select-Object -Last 1
-        if ($line) { return ($line -match 'display power: off\s*$') }
+        # rev.10 (2026-10-08): CaseDisplay 는 재시작 때 Windows 가 등록 순간 알려주는 현재 상태를 "started" 줄보다
+        #   먼저(같은 초) 쓴다. rev.9 는 started 뒤 줄만 믿어서 화면 꺼진 중 재시작(10-08 08:29:07)을 켜짐으로 오판, LHM 을 다시 띄웠다.
+        #   → 마지막 display power 줄이 마지막 started 줄보다 1초 넘게 앞설 때만 낡은 줄로 보고 무시한다.
+        $m = @(Get-Content $cdLog -Tail 400 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'display power: (on|off)|started pid=' })
+        $pow = $m | Where-Object { $_ -match 'display power: (on|off)' } | Select-Object -Last 1
+        if ($pow) {
+            $st = $m | Where-Object { $_ -match 'started pid=' } | Select-Object -Last 1
+            $stale = $false
+            if ($st) {
+                try {
+                    $tp = [datetime]::ParseExact($pow.Substring(0, 19), 'yyyy-MM-dd HH:mm:ss', $null)
+                    $ts = [datetime]::ParseExact($st.Substring(0, 19), 'yyyy-MM-dd HH:mm:ss', $null)
+                    $stale = $tp -lt $ts.AddSeconds(-1)
+                } catch { $stale = $false }
+            }
+            if (-not $stale) { return ($pow -match 'display power: off\s*$') }
+        }
     }
     return $false
 }
@@ -138,7 +154,7 @@ function Get-Stamp { ($srcFiles | ForEach-Object { (Get-Item $_).LastWriteTimeUt
 $stamp = Get-Stamp
 $movedLogged = $false
 
-Log ("watcher started (rev.9) reset={0} videoidle={1}s" -f (Get-ResetMode), $videoIdle)
+Log ("watcher started (rev.10) reset={0} videoidle={1}s" -f (Get-ResetMode), $videoIdle)
 $wasRemote = (Get-Remote).Active
 $lastTry = [datetime]::MinValue
 $pendingReset = $false
